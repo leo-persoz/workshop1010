@@ -1,0 +1,216 @@
+---
+title: "Influenza A H7N9 in China, 2013"
+format: dashboard
+theme: lux
+---
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, outbreaks, bslib, bsicons, shiny, 
+               rgeoboundaries, plotly, htmltools, reactable,
+               shiny, shinydashboard)
+
+# view data
+#head(outbreaks::fluH7N9_china_2013)
+```
+```{r}
+#calculate/create the 3 top widgets
+
+tot_cases <- fluH7N9_china_2013 %>% 
+  count()
+
+tot_death <- fluH7N9_china_2013 %>%
+  filter(outcome == "Death") %>% 
+  count()
+  
+tot_hosp <- fluH7N9_china_2013 %>% 
+  filter(!is.na(date_of_hospitalisation)) %>% 
+  count()
+
+# challenge
+
+# create total cases per day of onset
+fluH7N9_china_2013 <- fluH7N9_china_2013 %>%
+  group_by(date_of_onset) %>%
+  summarize(tot_onset = n()) %>% 
+  ungroup() %>% 
+  right_join(fluH7N9_china_2013) %>% 
+  select(-date_of_onset, -tot_onset, case_id, date_of_onset, everything(), tot_onset)
+
+# fluH7N9_china_2013 %>% arrange(-tot_onset) # = 7
+
+# fluH7N9_china_2013 %>% mutate(tot_onset = as.numeric(tot_onset))
+
+# mean(fluH7N9_china_2013$tot_onset, na.rm= T) # = 4.6
+
+
+# sparklines
+sparkline <- plot_ly(fluH7N9_china_2013) %>%
+  add_lines(
+    x = ~date_of_onset, y = ~tot_onset,
+    color = I("white"), span = I(1),
+    fill = 'tozeroy', alpha = 0.2
+  ) %>%
+  layout(
+    xaxis = list(visible = F, showgrid = F, title = ""),
+    yaxis = list(visible = F, showgrid = F, title = ""),
+    hovermode = "x",
+    margin = list(t = 0, r = 0, l = 0, b = 0),
+    font = list(color = "white"),
+    paper_bgcolor = "transparent",
+    plot_bgcolor = "transparent"
+  ) %>%
+  config(displayModeBar = F) %>%
+  htmlwidgets::onRender(
+    "function(el) {
+      el.closest('.bslib-value-box')
+        .addEventListener('bslib.card', function(ev) {
+          Plotly.relayout(el, {'xaxis.visible': ev.detail.fullScreen});
+        })
+    }"
+  )
+
+#old boxe
+
+#value_box(
+ # title = "Total Cases",
+ # value = tot_cases,
+ # showcase = bsicons::bs_icon("virus"),
+ # theme = value_box_theme(bg = "#1E90FF"))
+```
+
+```{r}
+col_chart <- fluH7N9_china_2013 %>%
+  group_by(province) %>% 
+  count() %>%
+  arrange(-n) %>%
+  
+  ggplot(aes(x = n, y = reorder(province, n))) +
+  geom_col(fill = "#1E90FF") +
+  labs(x = "Number of Cases",
+       y = "") +
+  theme_minimal()
+
+col_chart_ggplotly <- ggplotly(col_chart)
+```
+
+```{r}
+#pacman::p_load(outbreaks, rgeoboundaries, plotly)
+
+### MAP OF CASES PER PROVINCE
+province_summary <- fluH7N9_china_2013 %>% 
+  group_by(province) %>% 
+  summarise(total_cases = n()) 
+
+china_map <- rgeoboundaries::gb_adm1("china")
+
+# Check the keys to see if join will be successful
+#setdiff(province_summary$province, china_map$shapeName)
+#setdiff(china_map$shapeName, province_summary$province)
+# Some work to be done to harmonize these
+
+china_map <- china_map %>%
+  # Remove the strings Province, Municipality and Autonomous Region 
+  # to allow matching
+  mutate(province = str_trim(
+    str_remove(shapeName, "Province|Municipality|Autonomous Region")
+  ))
+
+# Check if join will work fine
+#setdiff(province_summary$province, china_map$province)
+
+# Fix Guangdong, which based on a quick Google is actually Guangzhou
+china_map <- china_map %>% 
+  mutate(province = if_else(province == "Guangzhou", "Guangdong", province)) 
+  
+# Check again
+#setdiff(province_summary$province, china_map$province)
+
+# Now join
+china_map_joined <- 
+  left_join(china_map, province_summary, by = "province") %>% 
+  # Create tooltip label 
+  mutate(tooltip_label = paste0(province, ": ", total_cases))
+
+china_map_plot <- ggplot(china_map_joined) +
+  geom_sf(aes(fill = total_cases, text = tooltip_label)) + 
+  theme_void() +
+  labs(fill = "Number of Cases") + 
+  theme(legend.position = "none")
+
+china_map_plot_ggplotly <- 
+  ggplotly(china_map_plot, tooltip = "text")
+```
+
+# HOME 
+
+## {heigth=25%}
+
+### {width=34%}
+
+```{r}
+value_box(
+  title = "Total cases over time",
+  value = tot_cases,
+  p("Averaged 4.6% cases over that period"),
+  p("Peaked 7 cases per day"),
+  showcase = sparkline,
+  full_screen = TRUE,
+  theme = value_box_theme(bg = "#1E90FF")
+)
+```
+
+### {width=33%}
+
+```{r}
+value_box(
+  title = "Total Hospitalizations",
+  value = tot_hosp,
+  showcase = bsicons::bs_icon("hospital"),
+  theme = value_box_theme(bg = "#104E8B")
+)
+```
+
+### {width=33%}
+
+```{r}
+value_box(
+  title = "Total Deaths",
+  value = tot_death,
+  showcase = bsicons::bs_icon("clipboard2-pulse"),
+  theme = value_box_theme(bg = "#1C86EE")
+)
+```
+
+## {height=75%}
+
+### {width=35%}
+
+```{r title = "Number of Cases by Province"}
+col_chart_ggplotly
+```
+
+### {width=65%}
+
+```{r title = "Map of Provinces by Number of Cases"}
+china_map_plot_ggplotly
+```
+
+# DOWNLOAD DATA
+
+```{r}
+htmltools::browsable(
+  tagList(
+    reactable(fluH7N9_china_2013, 
+              elementId = "fluH7N9_china_2013-table", 
+              searchable = T, 
+              filterable = T), 
+    
+tags$button("Download as CSV", 
+            onclick = "Reactable.downloadDataCSV('fluH7N9_china_2013-table')")
+  )
+)
+```
+
+# ABOUT
